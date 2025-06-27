@@ -22,8 +22,8 @@ def run_test(TCP_IP='127.0.0.1', TCP_PORT=6501, debug=True, version=13520):
         """
         util = Util(NTCP)                                                               # Nanonis Util Module
 
-        util.SessionPathSet("C:/Users")                                                 # Set the session path
         session_path = util.SessionPathGet()                                            # Get the current session path
+        util.SessionPathSet(session_path)                                               # Set the session path
         if(debug):
             print("Session path")
             print(session_path)
