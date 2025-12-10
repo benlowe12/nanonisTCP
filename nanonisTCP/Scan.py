@@ -11,6 +11,7 @@ class Scan:
     """
     def __init__(self, nanonisTCP):
         self.nanonisTCP = nanonisTCP
+        self.version = nanonisTCP.version
     
     def Action(self, scan_action, scan_direction="up"):
         """
@@ -40,10 +41,34 @@ class Scan:
         # Receive Response (check errors)
         self.nanonisTCP.receive_response(0)
     
+    def StatusGet(self):
+        """
+        Returns if the scan is running or not.
+
+        True if running
+        False if not
+        """
+        if(self.version < 14000):
+            raise Exception(f"Scan.StatusGet is not supported in nanonis version {self.version}. Requires 14000")
+        
+        ## Make Header
+        hex_rep = self.nanonisTCP.make_header('Scan.StatusGet', body_size=0)
+        
+        self.nanonisTCP.send_command(hex_rep)
+        
+        # Receive Response
+        response = self.nanonisTCP.receive_response(4)
+        
+        self.nanonisTCP.check_error(response, 4)
+
+        is_running = self.nanonisTCP.hex_to_int32(response[0:4]) > 0
+        
+        return is_running
+
     def WaitEndOfScan(self,timeout=-1):
         """
-        Waits for the end-of-scan
-        This function returns only when an end-of-scan or timeout occurs (which
+        Waits for the end-of-line
+        This function returns only when an end-of-line or timeout occurs (which
         ever occurs first)
 
         Parameters
@@ -51,11 +76,10 @@ class Scan:
 
         Returns
         timeout_status : 1: function timed out. 0: didn't time out
-        
 
         """
         ## Make Header
-        hex_rep = self.nanonisTCP.make_header('Scan.WaitEndOfScan', body_size=4)
+        hex_rep = self.nanonisTCP.make_header('Scan.WaitEndOfLine', body_size=14)
         
         ## arguments
         hex_rep += self.nanonisTCP.to_hex(timeout,4)
@@ -72,6 +96,46 @@ class Scan:
         self.nanonisTCP.check_error(response, 8+file_path_size)
         
         return [timeout_status, file_path_size, file_path]
+    
+    def WaitEndOfLine(self,timeout=-1):
+        """
+        Waits for the end-of-scan
+        This function returns only when an end-of-scan or timeout occurs (which
+        ever occurs first)
+
+        Parameters
+        timeout : timeout in ms. if -1, it waits indefinitely
+
+        Returns
+        timeout_status : 1: function timed out. 0: didn't time out
+        
+
+        """
+        ## Make Header
+        hex_rep = self.nanonisTCP.make_header('Scan.WaitEndOfLine', body_size=4)
+        
+        ## arguments
+        hex_rep += self.nanonisTCP.to_hex(timeout,4)
+        
+        self.nanonisTCP.send_command(hex_rep)
+        
+        # Receive Response
+        response = self.nanonisTCP.receive_response()
+        
+        timeout_status = self.nanonisTCP.hex_to_uint32(response[0:4]) > 0
+        line_number    = self.nanonisTCP.hex_to_uint32(response[4:8])
+        type_of_movement = self.nanonisTCP.hex_to_uint16(response[8:10])
+        pass_number = self.nanonisTCP.hex_to_uint32(response[10:14])
+        
+        self.nanonisTCP.check_error(response, 14)
+        
+        types_of_movement = {
+            0: "forward",
+            1: "backward",
+            2: "center",
+            3: "start"
+        }
+        return [timeout_status, line_number, types_of_movement[type_of_movement], pass_number]
     
     def FrameSet(self,x,y,w,h,angle=0):
         """
@@ -217,7 +281,7 @@ class Scan:
         
         return [num_channels,channel_indexes,pixels,lines]
         
-    def PropsSet(self,continuous_scan=0,bouncy_scan=0,autosave=0,series_name="%y%m%d_%H-%M-%S_SPM",comment=""):
+    def PropsSet(self,continuous_scan=0,bouncy_scan=0,autosave=0,series_name="%y%m%d_%H-%M-%S_SPM",comment="",modules_names=[], autopaste="no_change"):
         """
         Configures some of the scan parameters
 
@@ -247,8 +311,31 @@ class Scan:
         """
         series_name_size = int(len(self.nanonisTCP.string_to_hex(series_name))/2)
         comment_size     = int(len(self.nanonisTCP.string_to_hex(comment))/2)
+        
         body_size = 20 + series_name_size + comment_size
         
+        names_size = []
+        modules_names_size = 0
+        autopaste_size = 0
+        if(self.version > 14000):
+            for name in modules_names:
+                name_size = int(len(self.nanonisTCP.string_to_hex(name))/2)
+                modules_names_size += int(len(self.nanonisTCP.string_to_hex(name))/2)
+            
+            modules_names_size += 4 # This is the size of modules_names_size itself (because it's an int)
+            modules_names_size += 4 # This is the size of modules_names_number (int) that TCP interface requires to let it know the number of elements in the array
+            autopaste_size = 4
+            autopaste_dict = {
+                "no_change": 0,
+                "all": 1,
+                "next": 2,
+                "off": 3,
+            }
+            if(not autopaste.lower() in autopaste_dict):
+                raise Exception(f"Error in Scan.PropsSet: autopase must be one of 'no_change', 'all', 'next', 'off'. Received: {autopaste}")
+
+            body_size += modules_names_size + autopaste_size
+
         ## Make Header
         hex_rep = self.nanonisTCP.make_header('Scan.PropsSet', body_size=body_size)
         
@@ -263,6 +350,13 @@ class Scan:
         if(comment_size > 0):
             hex_rep += self.nanonisTCP.string_to_hex(comment)
         
+        if(self.version > 14000):
+            hex_rep += self.nanonisTCP.to_hex(modules_names_size,4)
+            hex_rep += self.nanonisTCP.to_hex(len(modules_names),4)
+            if(modules_names_size > 0):
+                hex_rep += self.nanonisTCP.string_to_hex(comment)
+            hex_rep += self.nanonisTCP.to_hex(autopaste,4)
+
         self.nanonisTCP.send_command(hex_rep)
         
         # Receive Response (check errors)
