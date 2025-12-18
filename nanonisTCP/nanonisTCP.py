@@ -118,25 +118,52 @@ class nanonisTCP:
         
         return response
     
-    def check_error(self,response,error_index):
+    def check_error(self, response, error_index):
         """
         Checks the response from nanonis for error messages
 
         Parameters
+        ----------
         response : response body (not inc. header) from nanonis (bytes)
         error_index : index of error status within the body
 
         Raises
-        Exception   : error message returned from Nanonis
-
+        ------
+        Exception : error message returned from Nanonis
         """
-        i = error_index                                                         # error_index points to start-byte in the body, which is after the 40-byte header
-        error_status = self.hex_to_uint16(response[i:i+4])                      # error_status is 4 bytes long
-        
-        if(error_status):
-            i += 8                                                              # index of error description is 8 bytes after error status
-            error_description = response[i:].decode()                           # just grab from start index to the end of the message
-            raise Exception(error_description)                                  # raise the exception
+
+        i = error_index  # error_index points into the body, after the 40-byte header
+
+        if self.version > 14000:
+            # error_status (int32)
+            error_status = self.hex_to_int32(response[i:i+4])
+            i += 4
+
+            # error_code (int32) – we don't use it but must skip it
+            error_code = self.hex_to_int32(response[i:i+4])
+            i += 4
+
+            if error_status != 0:
+                # msg_size (int32)
+                msg_size = self.hex_to_int32(response[i:i+4])
+                i += 4
+
+                # error message itself
+                error_description = response[i:i+msg_size].decode(errors='replace')
+                raise Exception(error_description)
+
+            return
+        else:
+            error_status = self.hex_to_uint16(response[i:i+2])  # 2-byte field
+            i += 2
+
+            if error_status != 0:
+                # old protocol has no code or size prefix — remainder is message
+                error_description = response[i:].decode(errors='replace')
+                raise Exception(error_description)
+
+            return
+                               # raise the exception
         
     
     def connect(self):

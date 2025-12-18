@@ -40,6 +40,18 @@ class Scan:
         
         # Receive Response (check errors)
         self.nanonisTCP.receive_response(0)
+        
+    def Start(self, direction="up"):
+        return self.Action("start", direction)
+
+    def Stop(self):
+        return self.Action("stop")
+
+    def Pause(self):
+        return self.Action("pause")
+
+    def Resume(self):
+        return self.Action("resume")
     
     def StatusGet(self):
         """
@@ -65,36 +77,23 @@ class Scan:
         
         return is_running
 
-    def WaitEndOfScan(self,timeout=-1):
+    def WaitEndOfScan(self, timeout=-1):
         """
-        Waits for the end-of-line
-        This function returns only when an end-of-line or timeout occurs (which
-        ever occurs first)
-
-        Parameters
-        timeout : timeout in ms. if -1, it waits indefinitely
-
-        Returns
-        timeout_status : 1: function timed out. 0: didn't time out
-
+        Waits for the end-of-scan (EOS)
         """
-        ## Make Header
-        hex_rep = self.nanonisTCP.make_header('Scan.WaitEndOfLine', body_size=14)
-        
-        ## arguments
-        hex_rep += self.nanonisTCP.to_hex(timeout,4)
-        
+        hex_rep = self.nanonisTCP.make_header('Scan.WaitEndOfScan', body_size=4)
+
+        hex_rep += self.nanonisTCP.to_hex(timeout, 4)
         self.nanonisTCP.send_command(hex_rep)
-        
-        # Receive Response
+
         response = self.nanonisTCP.receive_response()
-        
+
         timeout_status = self.nanonisTCP.hex_to_uint32(response[0:4]) > 0
         file_path_size = self.nanonisTCP.hex_to_uint32(response[4:8])
         file_path      = response[8:8+file_path_size].decode()
-        
-        self.nanonisTCP.check_error(response, 8+file_path_size)
-        
+
+        self.nanonisTCP.check_error(response, 8 + file_path_size)
+
         return [timeout_status, file_path_size, file_path]
     
     def WaitEndOfLine(self,timeout=-1):
@@ -275,10 +274,6 @@ class Scan:
         idx += 4
         lines = self.nanonisTCP.hex_to_int32(response[idx:idx+4])
         
-        # Receive Response (check errors)
-        idx += 4
-        self.nanonisTCP.check_error(response, idx)                              # Makes no sense to check if there's error at this point, but how else do we check?
-        
         return [num_channels,channel_indexes,pixels,lines]
         
     def PropsSet(self,continuous_scan=0,bouncy_scan=0,autosave=0,series_name="%y%m%d_%H-%M-%S_SPM",comment="",modules_names=[], autopaste="no_change"):
@@ -319,8 +314,14 @@ class Scan:
         autopaste_size = 0
         if(self.version > 14000):
             for name in modules_names:
-                name_size = int(len(self.nanonisTCP.string_to_hex(name))/2)
-                modules_names_size += int(len(self.nanonisTCP.string_to_hex(name))/2)
+                # name_size = int(len(self.nanonisTCP.string_to_hex(name))/2)
+                # modules_names_size += int(len(self.nanonisTCP.string_to_hex(name))/2)
+                
+                name_bytes = self.nanonisTCP.string_to_hex(name)
+                name_size = len(name_bytes) // 2
+        
+                modules_names_size += 4          # NEW — size field
+                modules_names_size += name_size  # bytes of the name itself
             
             modules_names_size += 4 # This is the size of modules_names_size itself (because it's an int)
             modules_names_size += 4 # This is the size of modules_names_number (int) that TCP interface requires to let it know the number of elements in the array
@@ -330,8 +331,12 @@ class Scan:
                 "all": 1,
                 "next": 2,
                 "off": 3,
+                0: 0,
+                1: 1,
+                2: 2,
+                3: 3
             }
-            if(not autopaste.lower() in autopaste_dict):
+            if(not autopaste in autopaste_dict):
                 raise Exception(f"Error in Scan.PropsSet: autopase must be one of 'no_change', 'all', 'next', 'off'. Received: {autopaste}")
 
             body_size += modules_names_size + autopaste_size
@@ -351,11 +356,17 @@ class Scan:
             hex_rep += self.nanonisTCP.string_to_hex(comment)
         
         if(self.version > 14000):
-            hex_rep += self.nanonisTCP.to_hex(modules_names_size,4)
-            hex_rep += self.nanonisTCP.to_hex(len(modules_names),4)
-            if(modules_names_size > 0):
-                hex_rep += self.nanonisTCP.string_to_hex(comment)
-            hex_rep += self.nanonisTCP.to_hex(autopaste,4)
+            hex_rep += self.nanonisTCP.to_hex(modules_names_size, 4)
+            hex_rep += self.nanonisTCP.to_hex(len(modules_names), 4)
+
+            for name in modules_names:
+                name_bytes = self.nanonisTCP.string_to_hex(name)
+                name_size = len(name_bytes) // 2
+                hex_rep += self.nanonisTCP.to_hex(name_size, 4)
+                hex_rep += name_bytes
+
+            # autopaste flag
+            hex_rep += self.nanonisTCP.to_hex(autopaste_dict[autopaste], 4)
 
         self.nanonisTCP.send_command(hex_rep)
         
@@ -411,7 +422,30 @@ class Scan:
             idx += 4
             comment = response[idx:idx+comment_size].decode()
         
-        return [continuous_scan,bouncy_scan,autosave,series_name,comment]
+        
+        idx = 16 + series_name_size + 4 + comment_size
+
+        modules_names = []
+        autopaste = 0
+
+        if(self.version > 14000):
+            # NEW PROTOCOL FIX: read module-name block
+            modules_names_total = self.nanonisTCP.hex_to_int32(response[idx:idx+4])
+            idx += 4
+
+            modules_count = self.nanonisTCP.hex_to_int32(response[idx:idx+4])
+            idx += 4
+
+            for _ in range(modules_count):
+                name_size = self.nanonisTCP.hex_to_int32(response[idx:idx+4])
+                idx += 4
+                modules_names.append(response[idx:idx+name_size].decode())
+                idx += name_size
+
+            autopaste = self.nanonisTCP.hex_to_int32(response[idx:idx+4])
+            idx += 4
+
+        return [continuous_scan, bouncy_scan, autosave, series_name, comment, modules_names, autopaste]
         
     def SpeedSet(self,fwd_speed=0,bwd_speed=0,fwd_line_time=0,bwd_line_time=0,const_param=-1,speed_ratio=0):
         """
