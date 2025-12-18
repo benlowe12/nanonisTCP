@@ -272,7 +272,7 @@ class UserOut:
         
         self.nanonisTCP.send_command(hex_rep)
         
-        self.nanonisTCP.receive_response(0)
+        self.nanonisTCP.receive_response()
         
     def LimitsGet(self, output_index):
         """

@@ -220,7 +220,7 @@ class Signals:
         
         self.NanonisTCP.send_command(hex_rep)
         
-        response = self.NanonisTCP.receive_response(8)
+        response = self.NanonisTCP.receive_response(4)
         
         signal_value = self.NanonisTCP.hex_to_float32(response[0:4])
         

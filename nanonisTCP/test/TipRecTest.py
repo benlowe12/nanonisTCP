@@ -55,5 +55,3 @@ def run_test(TCP_IP='127.0.0.1', TCP_PORT=6501, debug=True, version=13520):
     
     NTCP.close_connection()
     return "success"
-
-run_test()

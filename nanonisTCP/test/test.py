@@ -23,7 +23,7 @@ import time
 # %%
 # Run test scripts
 debug   = False
-version = 13520
+version = 15000
 
 print("********************************")
 print("Testing AutoApproach module...")
